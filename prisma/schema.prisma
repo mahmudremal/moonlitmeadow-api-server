@@ -1,4 +1,3 @@
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -38,6 +37,11 @@ model Store {
   collections Collection[]
   warehouses Warehouse[]
   campaigns  Campaign[]
+  media      Media[]
+  attributes Attribute[]
+  carts      Cart[]
+  orders     Order[]
+  vendors    Vendor[]
 }
 
 /* Authentication and roles */
@@ -51,6 +55,9 @@ model User {
   tenantId   String?
   roles      RoleAssignment[]
   sessions   Session[]
+  carts      Cart[]
+  orders     Order[]
+  reviews    Review[]
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 }
@@ -120,6 +127,7 @@ model Product {
   id           String    @id @default(uuid())
   store        Store     @relation(fields: [storeId], references: [id])
   storeId      String
+  vendor       Vendor?   @relation("VendorProducts", fields: [vendorId], references: [id])
   vendorId     String?   // optional vendor/manufacturer
   title        String
   description  String?
@@ -132,6 +140,7 @@ model Product {
   collections  CollectionProduct[]
   media        Media[]
   specs        ProductSpec[]
+  reviews      Review[]
   customData   Json?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -184,6 +193,7 @@ model Media {
   altText    String?
   position   Int @default(0)
   meta       Json?
+  variants   ProductVariant[] @relation("VariantMedia")
   createdAt  DateTime @default(now())
 }
 
@@ -203,6 +213,7 @@ model Attribute {
   slug       String
   type       AttributeType @default(TEXT) // TEXT, SELECT, MULTISELECT, NUMBER
   values     AttributeValue[]
+  variantAttributes VariantAttribute[]
   createdAt  DateTime @default(now())
   @@unique([storeId, slug])
 }
@@ -214,6 +225,7 @@ model AttributeValue {
   value       String
   sortOrder   Int      @default(0)
   meta        Json?
+  variantAttributes VariantAttribute[]
   @@unique([attributeId, value])
 }
 
@@ -251,6 +263,9 @@ model ProductVariant {
   attributes    VariantAttribute[]
   media         Media[]  @relation("VariantMedia")
   inventory     InventoryItem[]
+  priceHistory  PriceHistory[]
+  cartItems     CartItem[]
+  orderItems    OrderItem[]
   status        VariantStatus @default(ENABLED)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -394,6 +409,7 @@ model Order {
   shipping     Json
   payments     Payment[]
   fulfillments Fulfillment[]
+  returns      ReturnRequest[]
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   metadata     Json?
