@@ -1,0 +1,547 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/*
+ Multitenancy: Tenant represents company/account (e.g., seller or marketplace).
+ Store is a sellable storefront under a Tenant. Use tenantId on most entities.
+*/
+
+model Tenant {
+  id         String    @id @default(uuid())
+  name       String
+  slug       String    @unique
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  stores     Store[]
+  users      User[]    @relation("TenantUsers")
+}
+
+model Store {
+  id         String    @id @default(uuid())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId   String
+  name       String
+  slug       String    @unique
+  currency   String    @default("USD")
+  defaultLocale String @default("en")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  categories Category[]
+  products   Product[]
+  collections Collection[]
+  warehouses Warehouse[]
+  campaigns  Campaign[]
+}
+
+/* Authentication and roles */
+
+model User {
+  id         String    @id @default(uuid())
+  email      String    @unique
+  password   String
+  name       String?
+  tenant     Tenant?   @relation("TenantUsers", fields: [tenantId], references: [id])
+  tenantId   String?
+  roles      RoleAssignment[]
+  sessions   Session[]
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model Role {
+  id    String @id @default(uuid())
+  name  String @unique
+  desc  String?
+  assignments RoleAssignment[]
+}
+
+model RoleAssignment {
+  id       String @id @default(uuid())
+  user     User   @relation(fields: [userId], references: [id])
+  userId   String
+  role     Role   @relation(fields: [roleId], references: [id])
+  roleId   String
+  scope    String? // e.g., "store:STORE_ID" or "global"
+  createdAt DateTime @default(now())
+}
+
+/* Sessions / audit */
+
+model Session {
+  id        String   @id @default(uuid())
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  meta      Json?
+}
+
+/* Catalog: categories (hierarchical), collections */
+
+model Category {
+  id         String    @id @default(uuid())
+  store      Store     @relation(fields: [storeId], references: [id])
+  storeId    String
+  parent     Category? @relation("CategoryChildren", fields: [parentId], references: [id])
+  parentId   String?
+  children   Category[] @relation("CategoryChildren")
+  name       String
+  slug       String
+  position   Int       @default(0)
+  products   ProductCategory[]
+  createdAt  DateTime  @default(now())
+  @@unique([storeId, slug])
+  @@index([storeId, parentId])
+}
+
+model Collection {
+  id         String    @id @default(uuid())
+  store      Store     @relation(fields: [storeId], references: [id])
+  storeId    String
+  name       String
+  slug       String
+  description String?
+  rules      Json?     // dynamic rules for automatic collections
+  products   CollectionProduct[]
+  createdAt  DateTime  @default(now())
+  @@unique([storeId, slug])
+}
+
+/* Products, variants, media, attributes, specifications */
+
+model Product {
+  id           String    @id @default(uuid())
+  store        Store     @relation(fields: [storeId], references: [id])
+  storeId      String
+  vendorId     String?   // optional vendor/manufacturer
+  title        String
+  description  String?
+  status       ProductStatus @default(DRAFT)
+  slug         String
+  skuBase      String?   // human-friendly base SKU
+  publishedAt  DateTime?
+  variants     ProductVariant[]
+  categories   ProductCategory[]
+  collections  CollectionProduct[]
+  media        Media[]
+  specs        ProductSpec[]
+  customData   Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  @@unique([storeId, slug])
+  @@index([storeId, status])
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+/* Product <> Category many-to-many with position */
+
+model ProductCategory {
+  id         String   @id @default(uuid())
+  product    Product  @relation(fields: [productId], references: [id])
+  productId  String
+  category   Category @relation(fields: [categoryId], references: [id])
+  categoryId String
+  position   Int      @default(0)
+  createdAt  DateTime @default(now())
+  @@unique([productId, categoryId])
+}
+
+/* Collections join */
+
+model CollectionProduct {
+  id           String   @id @default(uuid())
+  collection   Collection @relation(fields: [collectionId], references: [id])
+  collectionId String
+  product      Product  @relation(fields: [productId], references: [id])
+  productId    String
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+  @@unique([collectionId, productId])
+}
+
+/* Media (images, videos) */
+
+model Media {
+  id         String   @id @default(uuid())
+  store      Store    @relation(fields: [storeId], references: [id])
+  storeId    String
+  product    Product? @relation(fields: [productId], references: [id])
+  productId  String?
+  url        String
+  type       MediaType @default(IMAGE)
+  altText    String?
+  position   Int @default(0)
+  meta       Json?
+  createdAt  DateTime @default(now())
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+/* Attributes and values (for faceted search and variants) */
+
+model Attribute {
+  id         String   @id @default(uuid())
+  store      Store    @relation(fields: [storeId], references: [id])
+  storeId    String
+  name       String
+  slug       String
+  type       AttributeType @default(TEXT) // TEXT, SELECT, MULTISELECT, NUMBER
+  values     AttributeValue[]
+  createdAt  DateTime @default(now())
+  @@unique([storeId, slug])
+}
+
+model AttributeValue {
+  id          String   @id @default(uuid())
+  attribute   Attribute @relation(fields: [attributeId], references: [id])
+  attributeId String
+  value       String
+  sortOrder   Int      @default(0)
+  meta        Json?
+  @@unique([attributeId, value])
+}
+
+enum AttributeType {
+  TEXT
+  SELECT
+  MULTISELECT
+  NUMBER
+}
+
+/* ProductSpec: product-level spec lines (e.g., color family, material) */
+
+model ProductSpec {
+  id        String   @id @default(uuid())
+  product   Product  @relation(fields: [productId], references: [id])
+  productId String
+  name      String
+  value     String
+  sortOrder Int     @default(0)
+}
+
+/* Variants: each variant is a sellable SKU */
+
+model ProductVariant {
+  id            String   @id @default(uuid())
+  product       Product  @relation(fields: [productId], references: [id])
+  productId     String
+  sku           String   @unique
+  title         String?
+  barcode       String?
+  price         Float
+  compareAt     Float?
+  weightKg      Float?
+  dimensions    Json?    // {length,width,height}
+  attributes    VariantAttribute[]
+  media         Media[]  @relation("VariantMedia")
+  inventory     InventoryItem[]
+  status        VariantStatus @default(ENABLED)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  customData    Json?
+}
+
+enum VariantStatus {
+  ENABLED
+  DISABLED
+}
+
+/* Variant <-> AttributeValue join */
+
+model VariantAttribute {
+  id              String         @id @default(uuid())
+  variant         ProductVariant @relation(fields: [variantId], references: [id])
+  variantId       String
+  attribute       Attribute      @relation(fields: [attributeId], references: [id])
+  attributeId     String
+  value           AttributeValue @relation(fields: [valueId], references: [id])
+  valueId         String
+  @@unique([variantId, attributeId])
+}
+
+/* Inventory and warehouses */
+
+model Warehouse {
+  id         String   @id @default(uuid())
+  store      Store    @relation(fields: [storeId], references: [id])
+  storeId    String
+  name       String
+  code       String   @unique
+  address    Json?
+  createdAt  DateTime @default(now())
+  stocks     InventoryItem[]
+}
+
+model InventoryItem {
+  id             String    @id @default(uuid())
+  variant        ProductVariant @relation(fields: [variantId], references: [id])
+  variantId      String
+  warehouse      Warehouse @relation(fields: [warehouseId], references: [id])
+  warehouseId    String
+  quantity       Int       @default(0)
+  reserved       Int       @default(0)
+  incoming       Int       @default(0)
+  safetyStock    Int       @default(0)
+  lastUpdated    DateTime  @updatedAt
+  @@unique([variantId, warehouseId])
+  @@index([variantId])
+}
+
+/* Pricing history and price overrides (for campaigns) */
+
+model PriceHistory {
+  id          String   @id @default(uuid())
+  variant     ProductVariant @relation(fields: [variantId], references: [id])
+  variantId   String
+  price       Float
+  reason      String?   // e.g., "campaign:CAMPAIGN_ID", "manual"
+  startAt     DateTime?
+  endAt       DateTime?
+  createdAt   DateTime  @default(now())
+  @@index([variantId])
+}
+
+/* Campaigns, promotions, coupons */
+
+model Campaign {
+  id         String   @id @default(uuid())
+  store      Store    @relation(fields: [storeId], references: [id])
+  storeId    String
+  name       String
+  type       CampaignType @default(PERCENTAGE) // PERCENTAGE, AMOUNT, BUY_X_GET_Y, FLASH_SALE
+  rules      Json?    // e.g., target variants, collections, categories
+  startsAt   DateTime
+  endsAt     DateTime
+  active     Boolean  @default(false)
+  coupons    Coupon[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+enum CampaignType {
+  PERCENTAGE
+  AMOUNT
+  BUY_X_GET_Y
+  FLASH_SALE
+}
+
+model Coupon {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  campaign    Campaign @relation(fields: [campaignId], references: [id])
+  campaignId  String
+  usageLimit  Int?
+  usedCount   Int      @default(0)
+  expiresAt   DateTime?
+  meta        Json?
+}
+
+/* Cart and orders */
+
+model Cart {
+  id         String   @id @default(uuid())
+  user       User?    @relation(fields: [userId], references: [id])
+  userId     String?
+  store      Store    @relation(fields: [storeId], references: [id])
+  storeId    String
+  items      CartItem[]
+  meta       Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model CartItem {
+  id         String    @id @default(uuid())
+  cart       Cart      @relation(fields: [cartId], references: [id])
+  cartId     String
+  variant    ProductVariant @relation(fields: [variantId], references: [id])
+  variantId  String
+  quantity   Int       @default(1)
+  priceAt    Float
+  meta       Json?
+  createdAt  DateTime  @default(now())
+}
+
+/* Orders, items, payments, fulfillment */
+
+model Order {
+  id           String    @id @default(uuid())
+  store        Store     @relation(fields: [storeId], references: [id])
+  storeId      String
+  user         User?     @relation(fields: [userId], references: [id])
+  userId       String?
+  orderNumber  String    @unique
+  status       OrderStatus @default(PENDING)
+  items        OrderItem[]
+  totals       Json      // {subtotal, tax, shipping, discount, grandTotal}
+  billing      Json
+  shipping     Json
+  payments     Payment[]
+  fulfillments Fulfillment[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  metadata     Json?
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PACKING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+/* Order line items */
+
+model OrderItem {
+  id         String   @id @default(uuid())
+  order      Order    @relation(fields: [orderId], references: [id])
+  orderId    String
+  variant    ProductVariant @relation(fields: [variantId], references: [id])
+  variantId  String
+  sku        String
+  title      String
+  quantity   Int
+  unitPrice  Float
+  totalPrice Float
+  taxAmount  Float
+  discount   Float
+}
+
+/* Payments */
+
+model Payment {
+  id         String   @id @default(uuid())
+  order      Order    @relation(fields: [orderId], references: [id])
+  orderId    String
+  provider   String   // e.g., stripe, paypal, bkash
+  method     String
+  amount     Float
+  status     PaymentStatus
+  raw        Json?    // gateway response
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  REFUNDED
+  FAILED
+}
+
+/* Fulfillment and shipment */
+
+model Fulfillment {
+  id           String   @id @default(uuid())
+  order        Order    @relation(fields: [orderId], references: [id])
+  orderId      String
+  items        Json     // [{orderItemId, qty}]
+  status       FulfillmentStatus @default(PENDING)
+  tracking     Json?
+  shippedAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+enum FulfillmentStatus {
+  PENDING
+  PICKED
+  PACKED
+  SHIPPED
+  DELIVERED
+  RETURNED
+  CANCELLED
+}
+
+/* Returns, refunds, reviews */
+
+model ReturnRequest {
+  id         String   @id @default(uuid())
+  order      Order    @relation(fields: [orderId], references: [id])
+  orderId    String
+  items      Json
+  reason     String
+  status     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  product    Product  @relation(fields: [productId], references: [id])
+  productId  String
+  user       User?    @relation(fields: [userId], references: [id])
+  userId     String?
+  rating     Int
+  title      String?
+  body       String?
+  createdAt  DateTime @default(now())
+  moderated  Boolean  @default(false)
+}
+
+/* Audit log / activity tracking */
+
+model ActivityLog {
+  id         String   @id @default(uuid())
+  tenantId   String?
+  storeId    String?
+  userId     String?
+  action     String   // e.g., product.create, order.update
+  entity     String?
+  entityId   String?
+  payload    Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+}
+
+/* Vendors / suppliers */
+
+model Vendor {
+  id         String   @id @default(uuid())
+  store      Store    @relation(fields: [storeId], references: [id])
+  storeId    String
+  name       String
+  code       String   @unique
+  contact    Json?
+  products   Product[] @relation("VendorProducts")
+}
+
+/* Tax and shipping metadata */
+
+model TaxRate {
+  id         String   @id @default(uuid())
+  storeId    String
+  name       String
+  rate       Float
+  meta       Json?
+}
+
+model ShippingMethod {
+  id         String   @id @default(uuid())
+  storeId    String
+  name       String
+  carrier    String
+  priceBy    Json  // rules per weight/zone
+  meta       Json?
+}

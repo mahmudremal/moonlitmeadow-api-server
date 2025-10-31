@@ -1,0 +1,1 @@
+// Dashboard purchases page component
